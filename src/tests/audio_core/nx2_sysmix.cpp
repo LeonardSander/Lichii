@@ -257,6 +257,33 @@ TEST_CASE("sysmix copies the physical extra slot and wrap then publishes consume
     REQUIRE(context.backing[0x5fff] == 0);
 }
 
+TEST_CASE("sysmix outputs configured 5.1 PCM in channel order", "[sysmix]") {
+    Context context;
+    const auto previous_mode = Settings::values.sound_index.GetValue();
+    SCOPE_EXIT {
+        Settings::values.sound_index.SetValue(previous_mode);
+    };
+    Settings::values.sound_index.SetValue(Settings::AudioMode::Stereo);
+    REQUIRE(Settings::GetAudioOutputChannelCount() == 2);
+    Settings::values.sound_index.SetValue(Settings::AudioMode::Surround);
+    context.sink.host_channels = 6;
+    const std::array<f32, 6> frame{0.25f, -0.25f, 0.5f, -0.5f, 0.75f, -0.75f};
+    REQUIRE(context.Memory().WriteBlock(Context::Base + 0x1040, frame.data(), sizeof(frame)));
+    Cursor(context, 0, 1);
+    REQUIRE(Settings::GetAudioOutputChannelCount() == 6);
+    SysmixOutput stream{context.system, *context.process, context.sink, 1, Context::Base,
+                        Context::Size, 0x24};
+    REQUIRE(stream.Open(5, 6, 48000, 256, 0, 0).IsSuccess());
+    REQUIRE(stream.SetEngaged(true).IsSuccess());
+    stream.Pump();
+    std::array<s16, 240 * 6> output{};
+    context.sink.last->ProcessAudioOutAndRender(output, 240);
+    REQUIRE(std::ranges::equal(std::span{output}.first(6),
+                               std::array<s16, 6>{8192, -8192, 16384, -16384, 24576, -24576}));
+    REQUIRE(std::ranges::all_of(std::span{output}.subspan(6),
+                                [](s16 sample) { return sample == 0; }));
+}
+
 TEST_CASE("sysmix plays the Sports Resort Q15 movie ring including wrap and gain", "[sysmix]") {
     Context context;
     Cursor(context, 960, 1);
@@ -285,14 +312,16 @@ TEST_CASE("sysmix plays the Sports Resort Q15 movie ring including wrap and gain
     REQUIRE(stream.GetDataEvent()->IsSignaled(context.system.Kernel()));
 }
 
-TEST_CASE("sysmix advertises only implemented stereo PCM formats", "[sysmix]") {
+TEST_CASE("sysmix advertises supported stereo and 5.1 PCM formats", "[sysmix]") {
     REQUIRE(SysmixOutput::IsFormatSupported(2, 2, 48000));
     REQUIRE(SysmixOutput::IsFormatSupported(5, 2, 48000));
+    REQUIRE(SysmixOutput::IsFormatSupported(2, 6, 48000));
+    REQUIRE(SysmixOutput::IsFormatSupported(5, 6, 48000));
     for (const u32 format : {0U, 1U, 3U, 4U, 6U, 258U, 261U}) {
         REQUIRE_FALSE(SysmixOutput::IsFormatSupported(format, 2, 48000));
+        REQUIRE_FALSE(SysmixOutput::IsFormatSupported(format, 6, 48000));
     }
     REQUIRE_FALSE(SysmixOutput::IsFormatSupported(2, 1, 48000));
-    REQUIRE_FALSE(SysmixOutput::IsFormatSupported(2, 6, 48000));
     REQUIRE_FALSE(SysmixOutput::IsFormatSupported(2, 2, 44100));
 }
 

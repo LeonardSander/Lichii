@@ -157,8 +157,8 @@ struct SysmixOutput::Impl {
     bool open{};
     bool engaged{};
     bool faulted{};
-    std::array<u8, BlockFrames * 2 * sizeof(f32)> input{};
-    std::array<s16, BlockFrames * 2> output{};
+    std::array<u8, BlockFrames * AudioCore::MaxChannels * sizeof(f32)> input{};
+    std::array<s16, BlockFrames * AudioCore::MaxChannels> output{};
     SysmixOutputCounters counters{};
 };
 
@@ -184,7 +184,7 @@ Result SysmixOutput::ValidateRegion(Kernel::KProcess& process, u64 buffer, u64 s
 bool SysmixOutput::IsFormatSupported(u32 sample_type, u32 channels, u32 rate) {
     return (sample_type == static_cast<u32>(AudioCore::SampleFormat::PcmInt16) ||
             sample_type == static_cast<u32>(AudioCore::SampleFormat::PcmFloat)) &&
-           channels == 2 && rate == 48000;
+           (channels == 2 || channels == 6) && rate == 48000;
 }
 
 /// Accept 48 kHz S16 or F32 microphone capture with one or two guest channels.
@@ -452,8 +452,8 @@ void SysmixOutput::Pump() {
     u32 nonzero{};
     for (u32 frame = 0; frame < taken; ++frame) {
         bool audible{};
-        for (u32 channel = 0; channel < 2; ++channel) {
-            const u32 index = frame * 2 + channel;
+        for (u32 channel = 0; channel < p.channels; ++channel) {
+            const u32 index = frame * p.channels + channel;
             f32 value;
             if (p.format == AudioCore::SampleFormat::PcmInt16) {
                 s16 sample;
@@ -472,7 +472,8 @@ void SysmixOutput::Pump() {
         nonzero += audible;
     }
     AudioCore::Sink::SinkBuffer block{BlockFrames, 0, p.counters.admitted_blocks, false};
-    if (!p.host->TryAppendOutputBlock(block, p.output)) {
+    if (!p.host->TryAppendOutputBlock(
+            block, std::span{p.output}.first(BlockFrames * p.channels))) {
         if (!p.host->IsReady()) {
             p.Fault(ResultOperationFailed);
             return;

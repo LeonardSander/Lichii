@@ -31,6 +31,7 @@
 #include "audio_core/renderer/voice/voice_info.h"
 #include "audio_core/renderer/voice/voice_state.h"
 #include "common/alignment.h"
+#include "common/settings.h"
 #include "core/core.h"
 #include "core/core_timing.h"
 #include "core/hle/kernel/k_event.h"
@@ -657,8 +658,12 @@ u64 System::GenerateCommand(std::span<u8> in_command_buffer,
 
     s8 channel_count{2};
     if (execution_mode == ExecutionMode::Auto) {
-        const auto& sink{core.AudioCore().GetOutputSink()};
-        channel_count = static_cast<s8>(sink.GetDeviceChannels());
+        if (Settings::CurrentProgramIsSwitch2()) {
+            channel_count = static_cast<s8>(Settings::GetAudioOutputChannelCount());
+        } else {
+            const auto& sink{core.AudioCore().GetOutputSink()};
+            channel_count = static_cast<s8>(sink.GetDeviceChannels());
+        }
     }
 
     AudioRendererSystemContext render_context{

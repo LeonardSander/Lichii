@@ -17,6 +17,7 @@
 
 #include <fmt/ranges.h>
 
+#include "common/settings.h"
 #include "common/string_util.h"
 #include "audio_core/audio_core.h"
 #include "core/core.h"
@@ -88,8 +89,8 @@ struct Nx2SysmixStreams {
 };
 
 // Switch 2 virtual output devices (nn::audio::ListVirtualOutputDevices and friends), reached through
-// the object auddmg:u command 0 returns. Eden plays everything through one stereo 48 kHz output, so
-// there is one virtual device. The nx2: name keeps the other commands auto-stubbed and logged.
+// the object auddmg:u command 0 returns. There is one 48 kHz virtual device, with its output channel
+// count selected by the configured sound mode. The nx2: name keeps other commands auto-stubbed.
 // - 0(u32): u32 count, the device names in the out buffer (0x100 bytes each).
 // - 100(u32): the default device's name in the out buffer.
 // - 300(16-byte stream format, name buffer): whether the format is supported (result only).
@@ -204,7 +205,7 @@ private:
         };
         put32(0x100, 3);
         put32(0x104, 2);
-        put32(0x108, 2);     // stereo
+        put32(0x108, input ? 2 : Settings::GetAudioOutputChannelCount());
         put32(0x10c, 48000); // Hz
         CopyName(block.data() + 0x110, input ? PhysicalInputDeviceName : PhysicalDeviceName);
         const u64 latency_ns = 10'000'000;
