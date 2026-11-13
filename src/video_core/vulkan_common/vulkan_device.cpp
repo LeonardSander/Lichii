@@ -2060,6 +2060,11 @@ void Device::RemoveUnsuitableExtensions() {
     // disk cache of their own (DriverCachesPipelines) that don't prefer their internal cache: the
     // store would only duplicate it there (PipelineBinaries). NVIDIA 610.88 also gave ~7.8 MB of
     // blobs a pipeline: one Ocarina of Time session stored 2.3 GB.
+    // AMD's proprietary driver is the exception: its disk cache never keeps graphics pipelines
+    // with VK_DYNAMIC_STATE_VERTEX_INPUT_EXT (#770), so an RX 6650 XT rebuilt ~5,800 boot
+    // pipelines at ~120 ms each (12-15 min to the first frame) at every boot, and turning dynamic
+    // vertex input off lost the device on the first pipeline. The store keeps them instead.
+    const bool amd_binaries = properties.driver.driverID == VK_DRIVER_ID_AMD_PROPRIETARY;
     if (extensions.pipeline_binary) {
         LOG_INFO(Render_Vulkan,
                  "VK_KHR_pipeline_binary: pipelineBinaries {}, internal cache {}, prefers internal "
@@ -2071,7 +2076,8 @@ void Device::RemoveUnsuitableExtensions() {
     }
     extensions.pipeline_binary =
         features.pipeline_binary.pipelineBinaries && extensions.maintenance5 &&
-        !properties.pipeline_binary.pipelineBinaryPrefersInternalCache && !DriverCachesPipelines();
+        !properties.pipeline_binary.pipelineBinaryPrefersInternalCache &&
+        (!DriverCachesPipelines() || amd_binaries);
     RemoveExtensionFeatureIfUnsuitable(extensions.pipeline_binary, features.pipeline_binary,
                                        VK_KHR_PIPELINE_BINARY_EXTENSION_NAME);
 
@@ -2210,6 +2216,18 @@ u64 Device::GetDeviceMemorySlack() const {
 }
 
 u64 Device::GetDeviceMemoryBudget() const {
+    u64 result = GetDeviceHeapMemoryBudget();
+    if (is_integrated && !IsMoltenVK()) {
+        // An integrated GPU's device-local heap is system memory (a Radeon 780M reported a 21 GB
+        // budget): following it let the texture cache fill that much RAM before collecting, and
+        // kept ASTC uncompressed. Its budget is at most the share CollectPhysicalMemoryInfo
+        // gives it (4 GiB, 6 GiB with aggressive VRAM use).
+        result = (std::min)(result, device_access_memory);
+    }
+    return result;
+}
+
+u64 Device::GetDeviceHeapMemoryBudget() const {
     if (!extensions.memory_budget) {
         return 0;
     }
@@ -2232,13 +2250,6 @@ u64 Device::GetDeviceMemoryBudget() const {
         if (heap != main_heap) {
             result += AllocatedUsage(budget.heapUsage[heap], heap_budgets[heap]);
         }
-    }
-    if (is_integrated && !IsMoltenVK()) {
-        // An integrated GPU's device-local heap is system memory (a Radeon 780M reported a 21 GB
-        // budget): following it let the texture cache fill that much RAM before collecting, and
-        // kept ASTC uncompressed. Its budget is at most the share CollectPhysicalMemoryInfo
-        // gives it (4 GiB, 6 GiB with aggressive VRAM use).
-        result = (std::min)(result, device_access_memory);
     }
     return result;
 }
@@ -2292,6 +2303,7 @@ void Device::CollectPhysicalMemoryInfo() {
         }
         device_access_memory += heap_size;
     }
+    main_heap_size = limit(mem_properties.memoryHeaps[main_heap].size);
     if (is_integrated) {
         const s64 available_memory = static_cast<s64>(device_access_memory - device_initial_usage);
         const u64 memory_size = Settings::values.vram_usage_mode.GetValue() == Settings::VramUsageMode::Aggressive ? 6_GiB : 4_GiB;
